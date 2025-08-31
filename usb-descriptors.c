@@ -1,4 +1,39 @@
-// SPDX-License-Identifier: MIT
+/*
+MIT License - okhi - Open Keylogger Hardware Implant
+pico-esp-flasher
+---------------------------------------------------------------------------
+Copyright 2021 Álvaro Fernández Rojas <noltari@gmail.com>
+https://github.com/Noltari/pico-uart-bridge
+
+Copyright (c) [2024] by David Reguera Garcia aka Dreg
+https://github.com/therealdreg/pico-esp-flasher
+https://github.com/therealdreg/okhi
+https://www.rootkit.es
+X @therealdreg
+dreg@rootkit.es
+---------------------------------------------------------------------------
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+---------------------------------------------------------------------------
+WARNING: BULLSHIT CODE BY DREG X-)
+---------------------------------------------------------------------------
+*/
+
 /*
  * Copyright (c) 2021 Álvaro Fernández Rojas <noltari@gmail.com>
  *
@@ -21,17 +56,15 @@
 #define USBD_MAX_POWER_MA 500
 
 #define USBD_ITF_CDC_0 0
-#define USBD_ITF_CDC_1 2
-#define USBD_ITF_MAX 4
+// Dreg: USBD_ITF_MAX set to 2 because a single CDC function uses two interfaces (control + data).
+#define USBD_ITF_MAX 2
 
 #define USBD_CDC_0_EP_CMD 0x81
-#define USBD_CDC_1_EP_CMD 0x83
+// Dreg: Only one CDC endpoint set is defined (IN/OUT/COMMAND) because we expose a single COM port.
 
 #define USBD_CDC_0_EP_OUT 0x01
-#define USBD_CDC_1_EP_OUT 0x03
 
 #define USBD_CDC_0_EP_IN 0x82
-#define USBD_CDC_1_EP_IN 0x84
 
 #define USBD_CDC_CMD_MAX_SIZE 8
 #define USBD_CDC_IN_OUT_MAX_SIZE 64
@@ -64,12 +97,9 @@ static const uint8_t usbd_desc_cfg[USBD_DESC_LEN] = {
 	TUD_CONFIG_DESCRIPTOR(1, USBD_ITF_MAX, USBD_STR_0, USBD_DESC_LEN,
 		TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP, USBD_MAX_POWER_MA),
 
+	// Dreg: Single CDC descriptor present to match CFG_TUD_CDC = 1 (expose only one virtual COM port).
 	TUD_CDC_DESCRIPTOR(USBD_ITF_CDC_0, USBD_STR_CDC, USBD_CDC_0_EP_CMD,
 		USBD_CDC_CMD_MAX_SIZE, USBD_CDC_0_EP_OUT, USBD_CDC_0_EP_IN,
-		USBD_CDC_IN_OUT_MAX_SIZE),
-
-	TUD_CDC_DESCRIPTOR(USBD_ITF_CDC_1, USBD_STR_CDC, USBD_CDC_1_EP_CMD,
-		USBD_CDC_CMD_MAX_SIZE, USBD_CDC_1_EP_OUT, USBD_CDC_1_EP_IN,
 		USBD_CDC_IN_OUT_MAX_SIZE),
 };
 

@@ -1,7 +1,40 @@
-// SPDX-License-Identifier: MIT
 /*
- * Copyright 2021 Álvaro Fernández Rojas <noltari@gmail.com>
- */
+MIT License - okhi - Open Keylogger Hardware Implant
+pico-esp-flasher
+---------------------------------------------------------------------------
+Copyright 2021 Álvaro Fernández Rojas <noltari@gmail.com>
+https://github.com/Noltari/pico-uart-bridge
+
+Copyright (c) [2024] by David Reguera Garcia aka Dreg
+https://github.com/therealdreg/pico-esp-flasher
+https://github.com/therealdreg/okhi
+https://www.rootkit.es
+X @therealdreg
+dreg@rootkit.es
+---------------------------------------------------------------------------
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+---------------------------------------------------------------------------
+WARNING: BULLSHIT CODE BY DREG X-)
+---------------------------------------------------------------------------
+*/
+
+
 
 #include <hardware/irq.h>
 #include <hardware/structs/sio.h>
@@ -15,7 +48,7 @@
 #define MIN(a, b) ((a > b) ? b : a)
 #endif /* MIN */
 
-#define LED_PIN 25
+#define LED_PIN 26
 
 #define BUFFER_SIZE 2560
 
@@ -44,22 +77,17 @@ typedef struct {
 	mutex_t usb_mtx;
 } uart_data_t;
 
+// Dreg: Keeping only uart0 prototype; uart1 prototype and handler were removed to use a single COM port (UART0).
 void uart0_irq_fn(void);
-void uart1_irq_fn(void);
 
+// Dreg: UART_ID configured for a single UART instance (uart0) — uart1 removed to force all traffic to UART0.
 const uart_id_t UART_ID[CFG_TUD_CDC] = {
 	{
-		.inst = uart0,
-		.irq = UART0_IRQ,
-		.irq_fn = &uart0_irq_fn,
-		.tx_pin = 16,
-		.rx_pin = 17,
-	}, {
-		.inst = uart1,
-		.irq = UART1_IRQ,
-		.irq_fn = &uart1_irq_fn,
-		.tx_pin = 4,
-		.rx_pin = 5,
+			.inst = uart0,
+			.irq = UART0_IRQ,
+			.irq_fn = &uart0_irq_fn,
+			.tx_pin = 16,
+			.rx_pin = 17,
 	}
 };
 
@@ -190,14 +218,54 @@ void core1_entry(void)
 
 		tud_task();
 
+		// DREG MOD
+		/*
+		 
 		for (itf = 0; itf < CFG_TUD_CDC; itf++) {
 			if (tud_cdc_n_connected(itf)) {
 				con = 1;
 				usb_cdc_process(itf);
 			}
 		}
-
 		gpio_put(LED_PIN, con);
+
+		Check my esptool issue: https://github.com/espressif/esptool/issues/1119
+
+		esp tool v4.7.0 works fine, 
+		BUT From esptool commit https://github.com/espressif/esptool/commit/956557be9335e5ab6e008414068edeb99ee15430
+		The original code dont works
+		 
+	    ```
+		esptool added:
+
+		self._port = serial.serial_for_url(
+				port, exclusive=True, do_not_open=True
+			)
+			if sys.platform == "win32":
+				# When opening a port on Windows,
+				# the RTS/DTR (active low) lines
+				# need to be set to False (pulled high)
+				# to avoid unwanted chip reset
+				self._port.rts = False
+				self._port.dtr = False
+			self._port.open()
+         ```
+			
+		So no longer filter with tud_cdc_n_connected() → I always process the CDC 
+		 (so if esptool opens the port with DTR=0, we’ll still be reading) + tud_cdc_line_state_cb():
+		 
+		Conclusion: on Windows, esptool opens the port with DTR=0, and if you use tud_cdc_n_connected as a filter for the CDC you’ll run into problems. In addition, you need to handle DTR and RTS with CHIP PU and EBOOT so everything works correctly.
+	
+		 */
+
+
+		for (itf = 0; itf < CFG_TUD_CDC; itf++) {
+            usb_cdc_process(itf);
+        }
+		// END
+
+
+		gpio_put(LED_PIN, tud_mounted());
 	}
 }
 
@@ -224,10 +292,7 @@ void uart0_irq_fn(void)
 	uart_read_bytes(0);
 }
 
-void uart1_irq_fn(void)
-{
-	uart_read_bytes(1);
-}
+
 
 void uart_write_bytes(uint8_t itf)
 {
@@ -297,8 +362,65 @@ void init_uart_data(uint8_t itf)
 	uart_set_irq_enables(ui->inst, true, false);
 }
 
+
+
+// mod by Dreg for okhi 
+#include "hardware/regs/io_qspi.h"
+#include "hardware/structs/ioqspi.h"
+#include "hardware/structs/sio.h"
+#include "hardware/sync.h"
+#include "pico/bootrom.h"
+
+static bool bootsel_pressed_safely(void)
+{
+    const uint CS_INDEX = 1;
+    uint32_t flags = save_and_disable_interrupts();
+
+    hw_write_masked(&ioqspi_hw->io[CS_INDEX].ctrl, GPIO_OVERRIDE_LOW << IO_QSPI_GPIO_QSPI_SS_CTRL_OEOVER_LSB,
+                    IO_QSPI_GPIO_QSPI_SS_CTRL_OEOVER_BITS);
+
+    for (volatile int i = 0; i < 1000; ++i)
+    {
+        tight_loop_contents();
+    }
+
+    bool pressed = !(sio_hw->gpio_hi_in & (1u << CS_INDEX));
+
+    hw_write_masked(&ioqspi_hw->io[CS_INDEX].ctrl, GPIO_OVERRIDE_NORMAL << IO_QSPI_GPIO_QSPI_SS_CTRL_OEOVER_LSB,
+                    IO_QSPI_GPIO_QSPI_SS_CTRL_OEOVER_BITS);
+
+    restore_interrupts(flags);
+
+    return pressed;
+}
+
+static void boot_press(void)
+{
+    int x = 0;
+    for (int i = 0; i < 100; i++)
+    {
+        if (bootsel_pressed_safely())
+        {
+            x++;
+        }
+    }
+
+    if (x > 90)
+    {
+        /*
+        printf("Bootsel pressed!\r\n");
+        blink_led(5);
+        */
+        reset_usb_boot(0, 0);
+    }
+}
+
+
+
 int main(void)
 {
+	boot_press();
+			// end
 	int itf;
 
 	usbd_serial_init();
@@ -311,6 +433,42 @@ int main(void)
 
 	multicore_launch_core1(core1_entry);
 
+	
+	// mod by Dreg for OKHI - Open Keylogger Hardware Implant
+
+#define ELOG_PI15_ES8 15
+#define CHIP_PU_EN_RST_PI28_ES8 28
+#define EBOOT_PI14_ES9 14
+
+	gpio_init(CHIP_PU_EN_RST_PI28_ES8);
+    gpio_set_dir(CHIP_PU_EN_RST_PI28_ES8, GPIO_OUT);
+
+	gpio_init(ELOG_PI15_ES8);
+    gpio_set_dir(ELOG_PI15_ES8, GPIO_OUT);
+
+	gpio_init(EBOOT_PI14_ES9);
+    gpio_set_dir(EBOOT_PI14_ES9, GPIO_OUT);
+
+    gpio_put(CHIP_PU_EN_RST_PI28_ES8, 0);
+	sleep_ms(100);
+
+	gpio_put(ELOG_PI15_ES8, 1);
+	sleep_ms(100);
+	
+    gpio_put(EBOOT_PI14_ES9, 0);
+	sleep_ms(100);
+
+    gpio_put(CHIP_PU_EN_RST_PI28_ES8, 1);
+
+	/*
+    gpio_set_dir(EBOOT_PI14_ES9, GPIO_IN);
+    gpio_disable_pulls(EBOOT_PI14_ES9);
+	sleep_ms(100);
+	*/
+
+	// end
+
+
 	while (1) {
 		for (itf = 0; itf < CFG_TUD_CDC; itf++) {
 			update_uart_cfg(itf);
@@ -320,3 +478,23 @@ int main(void)
 
 	return 0;
 }
+
+// mod by Dreg for OKHI - Open Keylogger Hardware Implant
+
+void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts)
+{
+    gpio_put(CHIP_PU_EN_RST_PI28_ES8, rts ? 0 : 1);
+    gpio_put(EBOOT_PI14_ES9,          dtr ? 0 : 1);
+}
+
+void tud_cdc_line_coding_cb(uint8_t itf, cdc_line_coding_t const* coding)
+{
+    if (itf >= CFG_TUD_CDC) return;
+    uart_data_t *ud = &UART_DATA[itf];
+    mutex_enter_blocking(&ud->lc_mtx);
+    ud->usb_lc = *coding;
+    mutex_exit(&ud->lc_mtx);
+    update_uart_cfg(itf);
+}
+
+// end
